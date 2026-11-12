@@ -1643,8 +1643,9 @@ function aimViews() {
   const vin = fitView(objPts([], CAM.closeMargin), reg);
   const vmid = fitView(launcherPts(objPts([], 0.25)), reg);
   const vout = fitView(targetPts(launcherPts(objPts([], 0.1))), reg);
-  if (vmid.d < vin.d) Object.assign(vmid, vin);
-  if (vout.d < vmid.d) Object.assign(vout, vmid);
+  // the zoom-out view is always the true fit of everything; never shrink it
+  if (vmid.d > vout.d) Object.assign(vmid, vout);
+  if (vin.d > vmid.d) Object.assign(vin, vmid);
   return zoomViews(vin, vmid, vout);
 }
 function targetView() { return fitView(targetPts([]), safeRegion('intro')); }
@@ -1652,7 +1653,7 @@ function resultViews() {
   const reg = safeRegion('result');
   const vin = fitView(objPts([], CAM.closeMargin), reg);
   const vout = fitView(targetPts(objPts([], 0.15)), reg);
-  if (vout.d < vin.d) Object.assign(vout, vin);
+  if (vin.d > vout.d) Object.assign(vin, vout);
   return zoomViews(vin, null, vout);
 }
 function smoothDampZoom(dt) {
@@ -2251,7 +2252,7 @@ window.__projectle = {
   G, C, setCount, launch, startPractice, openSummary,
   play(id, type, roundIdx = 2) { G.mode = 'practice'; const obj = C.OBJECTS.find((o) => o.id === id); startRound({ obj, type, roundIdx, seed: 1 }); G.introT = 99; },
   seek(t) { if (G.sim) G.playT = t; },
-  settled() { return Math.abs(G.zoom - G.zoomGoal) < 0.005 && Math.abs(Math.log(G.cam.d / G.camGoal.d)) < 0.01 && Math.abs(G.cam.x - G.camGoal.x) < 0.05; },
+  settled() { return Math.abs(G.zoom - G.zoomGoal) < 0.005 && Math.abs(Math.log(G.cam.d / G.camGoal.d)) < 0.005 && Math.abs(G.cam.x - G.camGoal.x) < 0.02 && Math.abs(G.cam.y - G.camGoal.y) < 0.02 && Math.abs(G.cam.z - G.camGoal.z) < 0.02; },
   visCheck() { // are object + target inside the free screen area?
     const reg = safeRegion('result'), pts = targetPts(objPts([], 0)); let ok = true, worst = '';
     for (const p of pts) { const q = project(p.x, p.y, p.z); if (q.x < reg.left - 2 || q.x > reg.right + 2 || q.y < reg.top - 2 || q.y > reg.bottom + 2) { ok = false; worst = Math.round(q.x) + ',' + Math.round(q.y); } }
