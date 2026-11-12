@@ -9,16 +9,20 @@ Everything is in **`index.html`**. Open it in a browser or host it as a static f
 | What | Where in `index.html` |
 | --- | --- |
 | Launch date (puzzle No. 1) | `LAUNCH_DATE` in the CORE script (section 1) |
+| Camera angle | `CAM.pitch` (tilt down, °) and `CAM.yaw` (diagonal turn, °) in the module script's camera section; `CAM.fov` |
+| Zoom limits & feel | `CAM.closeMargin` (space around the object at full zoom-in), `CAM.pad` (padding around fitted bounds), `CAM.zoomTime` (ease-in-out time), `CAM.pinchGain`, `CAM.wheelGain`; flight follow: `CAM.followWidth`, `CAM.followSpeed` |
+| Ruler markers | `MARK` (spacing, board size, minimum on-screen size `minPx`) |
+| Spin from launchers | `SPIN` in CORE (section 2b): spring `offset`, fan/blower `lever` and `gust`, rocket `roll` and `wobble`; per object `tumble` (scales all of these) and `spin` (air angular damping) |
+| Friction / sliding | per object `friction` (ground μ) and `roll` (rolling resistance in g); `ICE_MULT` / `ICE_ROLL_MULT` for leaf-blower ice rounds |
 | Launcher strength | `LAUNCHERS` (section 2): `strength`, plus `falloff` for fans and blowers, `stroke`/`angle` for springs, `burn`/`angle` for rockets |
 | Objects (mass, drag, friction, bounce…) | `OBJECTS` (section 3). Add an entry here and a matching builder in `MODELS` |
-| Ice friction for leaf-blower rounds | `ICE_MULT` (section 4) |
 | Answer range per round (difficulty curve) | `ROUND_RANGES` (section 5) |
 | Scoring curve | `score()` in CORE |
 | Leaderboard keys | `SUPABASE_URL`, `SUPABASE_ANON_KEY` at the top of the module script |
 | Drag distance per launcher | `PX_PER_LAUNCHER` |
 | Backdrops per scene | `THEMES` (and `buildProps`) |
 
-Any change to `LAUNCHERS`, `OBJECTS`, `ICE_MULT` or `ROUND_RANGES` changes every day's answers. If you change them after launch, players who already played that day will see a different puzzle.
+Any change to `LAUNCHERS`, `SPIN`, `OBJECTS`, `ICE_MULT`, `ICE_ROLL_MULT` or `ROUND_RANGES` changes every day's answers. If you change them after launch, players who already played that day will see a different puzzle.
 
 ## How rounds are made
 

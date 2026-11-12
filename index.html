@@ -269,16 +269,32 @@ var Core = (function () {
   // spring: force per spring (N) applied while touching, for `push` sec
   // rocket: thrust per rocket (N), for `burn` sec, at `angle` rad upward
   var LAUNCHERS = {
-    fan:    { one: 'fan',         many: 'fans',         strength: 12,   falloff: 12, spacing: 0.62 },
+    fan:    { one: 'fan',         many: 'fans',         strength: 15,   falloff: 12, spacing: 0.62 },
     spring: { one: 'spring',      many: 'springs',      strength: 150,  stroke: 0.28, angle: 0.92 },
-    rocket: { one: 'rocket',      many: 'rockets',      strength: 24,   burn: 1.0, angle: 0.3 },
+    rocket: { one: 'rocket',      many: 'rockets',      strength: 24,   burn: 1.0, angle: 0.42 },
     blower: { one: 'leaf blower', many: 'leaf blowers', strength: 30,   falloff: 3.0, spacing: 0.62 }
+  };
+
+  /* ---------- 2b. SPIN (how launchers twist objects) -----------------
+     All spin comes from where forces act (torque = r × F), so it is part
+     of the deterministic simulation. Each object's `tumble` scales these.
+     spring.offset: how far behind centre the springs push (× half length)
+     fan/blower: push acts `lever` of the way toward the fan/nozzle
+     height (centre of pressure), `gust` makes it uneven
+     rocket: thrust line sits `roll` × height off centre (slow roll) and
+     wobbles by `wobble` × height while burning                         */
+  var SPIN = {
+    spring: { offset: 0.1 },
+    fan:    { lever: 0.35, gust: 0.18, gustHz: 1.1 },
+    blower: { lever: 0.35, gust: 0.22, gustHz: 1.6 },
+    rocket: { roll: 0.07, wobble: 0.12, wobbleHz: 1.3, aim: 0.06 }
   };
 
   /* ---------- 3. OBJECTS (tune / extend here) -----------------------
      mass kg · drag (kg/m, quadratic air drag) · area m² (what fans and
      blowers push on) · friction (ground μ) · bounce (restitution) ·
-     roll (rolling resistance, in g) · spin (angular damping) ·
+     roll (rolling resistance, in g) · spin (air angular damping, 1/s) ·
+     tumble (how strongly off-centre launcher forces spin it, 0–1.5) ·
      difficulty 1-5 (later rounds get harder ones) · scene backdrop ·
      launchers that make sense · shape (side silhouette, centred on the
      centre of mass): {circle:r} or {poly:[x,y,...]} counter-clockwise.  */
@@ -291,46 +307,47 @@ var Core = (function () {
     return out;
   }
   var OBJECTS = [
-    { id: 'duck', name: 'rubber duck', mass: 1.1, drag: 0.05, area: 0.30, friction: 0.55, bounce: 0.55, roll: 0, spin: 0.8, difficulty: 1, scene: 'bath',
+    { id: 'duck', name: 'rubber duck', mass: 1.1, drag: 0.05, area: 0.30, friction: 0.6, bounce: 0.3, roll: 0.2, spin: 0.4, tumble: 0.3, difficulty: 1, scene: 'bath',
       launchers: ['fan', 'spring', 'blower'],
       shape: { poly: [-0.34, -0.24, 0.26, -0.24, 0.36, -0.05, 0.30, 0.16, 0.14, 0.34, -0.08, 0.34, -0.22, 0.12, -0.36, 0.02] } },
-    { id: 'cart', name: 'shopping cart', mass: 14, drag: 0.30, area: 0.95, friction: 0.13, bounce: 0.2, roll: 0, spin: 1.2, difficulty: 2, scene: 'parking',
+    { id: 'cart', name: 'shopping cart', mass: 14, drag: 0.30, area: 0.95, friction: 0.12, bounce: 0.2, roll: 0.11, spin: 0.4, tumble: 0.7, difficulty: 2, scene: 'parking',
       launchers: ['fan', 'rocket'],
       shape: { poly: [-0.5, -0.5, 0.42, -0.5, 0.55, 0.42, -0.55, 0.42] } },
-    { id: 'melon', name: 'watermelon', mass: 7, drag: 0.08, area: 0.32, friction: 0.7, bounce: 0.25, roll: 0.06, spin: 0.4, difficulty: 2, scene: 'garden',
+    { id: 'melon', name: 'watermelon', mass: 7, drag: 0.08, area: 0.32, friction: 0.85, bounce: 0.1, roll: 0.18, spin: 0.15, tumble: 1.0, difficulty: 2, scene: 'garden',
       launchers: ['spring', 'blower'],
       shape: { poly: ellipse(0.40, 0.29, 14, PI / 14 + PI / 2) } },
-    { id: 'bowling', name: 'bowling ball', mass: 6.5, drag: 0.03, area: 0.28, friction: 0.35, bounce: 0.12, roll: 0.025, spin: 0.2, difficulty: 4, scene: 'alley',
+    { id: 'bowling', name: 'bowling ball', mass: 6.5, drag: 0.03, area: 0.28, friction: 0.5, bounce: 0.12, roll: 0.07, spin: 0.1, tumble: 1.0, difficulty: 4, scene: 'alley',
       launchers: ['spring'],
       shape: { circle: 0.3 } },
-    { id: 'chair', name: 'office chair', mass: 11, drag: 0.25, area: 0.7, friction: 0.13, bounce: 0.2, roll: 0, spin: 1.0, difficulty: 3, scene: 'office',
+    { id: 'chair', name: 'office chair', mass: 11, drag: 0.25, area: 0.7, friction: 0.14, bounce: 0.2, roll: 0.12, spin: 0.35, tumble: 0.8, difficulty: 3, scene: 'office',
       launchers: ['fan', 'rocket'],
       shape: { poly: [-0.36, -0.45, 0.36, -0.45, 0.30, 0.0, -0.10, 0.62, -0.30, 0.62, -0.36, 0.0] } },
-    { id: 'pumpkin', name: 'pumpkin', mass: 5.5, drag: 0.08, area: 0.36, friction: 0.7, bounce: 0.3, roll: 0.09, spin: 0.5, difficulty: 2, scene: 'farm',
+    { id: 'pumpkin', name: 'pumpkin', mass: 5.5, drag: 0.08, area: 0.36, friction: 0.85, bounce: 0.12, roll: 0.22, spin: 0.15, tumble: 1.0, difficulty: 2, scene: 'farm',
       launchers: ['spring', 'blower'],
       shape: { poly: ellipse(0.40, 0.30, 12, PI / 12 + PI / 2) } },
-    { id: 'cone', name: 'traffic cone', mass: 1.8, drag: 0.05, area: 0.30, friction: 0.6, bounce: 0.35, roll: 0, spin: 0.5, difficulty: 3, scene: 'road',
+    { id: 'cone', name: 'traffic cone', mass: 1.8, drag: 0.05, area: 0.30, friction: 0.75, bounce: 0.2, roll: 0.12, spin: 0.25, tumble: 1.0, difficulty: 3, scene: 'road',
       launchers: ['fan', 'spring', 'blower'],
       shape: { poly: [-0.30, -0.28, 0.30, -0.28, 0.06, 0.55, -0.06, 0.55] } },
-    { id: 'beachball', name: 'beach ball', mass: 0.9, drag: 0.025, area: 0.55, friction: 0.5, bounce: 0.72, roll: 0.3, spin: 0.3, difficulty: 5, scene: 'beach',
+    { id: 'beachball', name: 'beach ball', mass: 1.2, drag: 0.025, area: 0.35, friction: 0.6, bounce: 0.7, roll: 0.6, spin: 0.15, tumble: 1.0, difficulty: 5, scene: 'beach',
       launchers: ['fan', 'spring'],
       shape: { circle: 0.42 } },
-    { id: 'toaster', name: 'toaster', mass: 3.6, drag: 0.08, area: 0.24, friction: 0.45, bounce: 0.22, roll: 0, spin: 0.8, difficulty: 1, scene: 'kitchen',
+    { id: 'toaster', name: 'toaster', mass: 3.6, drag: 0.08, area: 0.3, friction: 0.6, bounce: 0.15, roll: 0.22, spin: 0.25, tumble: 1.0, difficulty: 1, scene: 'kitchen',
       launchers: ['fan', 'spring', 'blower'],
       shape: { poly: [-0.32, -0.21, 0.32, -0.21, 0.34, 0.15, 0.26, 0.24, -0.26, 0.24, -0.34, 0.15] } },
-    { id: 'gnome', name: 'garden gnome', mass: 4.5, drag: 0.08, area: 0.30, friction: 0.55, bounce: 0.3, roll: 0, spin: 0.6, difficulty: 3, scene: 'garden',
+    { id: 'gnome', name: 'garden gnome', mass: 4.5, drag: 0.08, area: 0.30, friction: 0.6, bounce: 0.22, roll: 0.16, spin: 0.3, tumble: 0.8, difficulty: 3, scene: 'garden',
       launchers: ['fan', 'spring', 'blower'],
       shape: { poly: [-0.24, -0.34, 0.24, -0.34, 0.22, 0.10, 0.02, 0.62, -0.04, 0.62, -0.22, 0.10] } },
-    { id: 'skate', name: 'skateboard', mass: 2.8, drag: 0.05, area: 0.12, friction: 0.09, bounce: 0.3, roll: 0, spin: 0.8, difficulty: 4, scene: 'plaza',
+    { id: 'skate', name: 'skateboard', mass: 2.8, drag: 0.05, area: 0.12, friction: 0.1, bounce: 0.3, roll: 0.09, spin: 0.3, tumble: 0.9, difficulty: 4, scene: 'plaza',
       launchers: ['fan', 'spring'],
       shape: { poly: [-0.46, -0.09, 0.46, -0.09, 0.5, 0.05, 0.46, 0.08, -0.46, 0.08, -0.5, 0.05] } },
-    { id: 'fridge', name: 'mini fridge', mass: 19, drag: 0.15, area: 0.5, friction: 0.5, bounce: 0.1, roll: 0, spin: 1.0, difficulty: 2, scene: 'kitchen',
+    { id: 'fridge', name: 'mini fridge', mass: 15, drag: 0.15, area: 0.5, friction: 0.6, bounce: 0.08, roll: 0.2, spin: 0.4, tumble: 0.7, difficulty: 2, scene: 'kitchen',
       launchers: ['rocket', 'blower'],
       shape: { poly: [-0.30, -0.42, 0.30, -0.42, 0.30, 0.42, -0.30, 0.42] } }
   ];
 
   /* ---------- 4. SURFACES ------------------------------------------ */
-  var ICE_MULT = 0.2; // leaf-blower rounds are played on ice
+  var ICE_MULT = 0.2;      // leaf-blower rounds are on ice: friction × this
+  var ICE_ROLL_MULT = 0.4; // …and rolling resistance × this
 
   /* ---------- 5. ROUND DIFFICULTY ---------------------------------- */
   var ROUND_RANGES = [[3, 7], [5, 9], [7, 12], [9, 15], [12, 19]];
@@ -374,6 +391,9 @@ var Core = (function () {
   function layout(obj, type) {
     var info = shapeInfo(obj), L = LAUNCHERS[type];
     var lay = { type: type, padH: 0, padX0: 0, padX1: 0, slots: [] };
+    var startY = -info.minY;
+    lay.fanH = Math.min(0.85, Math.max(0.5, startY + 0.05)); // fan hub height
+    lay.nozzleH = 0.13;                                      // blower nozzle height
     var i;
     if (type === 'fan' || type === 'blower') {
       for (i = 0; i < MAX_COUNT; i++) {
@@ -408,7 +428,9 @@ var Core = (function () {
   function simulate(obj, type, n, record) {
     var info = shapeInfo(obj), L = LAUNCHERS[type], lay = layout(obj, type);
     var m = obj.mass, I = info.inertia, im = 1 / m, iI = 1 / I;
-    var mu = obj.friction * (type === 'blower' ? ICE_MULT : 1);
+    var ice = type === 'blower';
+    var mu = obj.friction * (ice ? ICE_MULT : 1), roll = obj.roll * (ice ? ICE_ROLL_MULT : 1);
+    var tumble = obj.tumble == null ? 1 : obj.tumble, SP = SPIN[type], halfH = info.height * 0.5;
     var e = obj.bounce, drag = obj.drag, spin = obj.spin;
     var x = 0, y = lay.padH - info.minY, a = 0, vx = 0, vy = 0, w = 0;
     var t = 0, restT = 0, steps = 0, maxSteps = Math.round(MAX_T / DT);
@@ -424,7 +446,7 @@ var Core = (function () {
       var c = dcos(a), s = dsin(a);
       // ---- external forces
       var sp = Math.sqrt(vx * vx + vy * vy);
-      var fx = -drag * sp * vx, fy = -m * G - drag * sp * vy;
+      var fx = -drag * sp * vx, fy = -m * G - drag * sp * vy, tq = 0;
       var nc = 0, i, k;
       // contacts first (needed for spring "touching")
       var minGap = 1e9;
@@ -448,7 +470,13 @@ var Core = (function () {
             var d = back - lay.slots[i].x;
             if (d > 0) { var q = d / L.falloff; f += 1 / (1 + q * q); }
           }
-          fx += L.strength * obj.area * f;
+          // gusty, uneven breeze: the push acts at the fan/nozzle height
+          // (above or below the centre of mass), so it rocks and tips
+          var gust = 1 + SP.gust * dsin(t * TAU * SP.gustHz + 0.7) * dsin(t * TAU * SP.gustHz * 0.43);
+          var pf = L.strength * obj.area * f * gust;
+          var hy = SP.lever * ((type === 'fan' ? lay.fanH : lay.nozzleH) - y) + SP.gust * halfH * dsin(t * TAU * SP.gustHz * 1.7);
+          if (hy > 0.9 * halfH) hy = 0.9 * halfH; else if (hy < -0.9 * halfH) hy = -0.9 * halfH;
+          fx += pf; tq -= hy * pf * tumble;
         } else if (type === 'spring') {
           // the board follows the object for exactly `stroke` metres of rise;
           // the last step only gets the fraction of force it is still in
@@ -461,13 +489,22 @@ var Core = (function () {
             if (t > 0.5) { frac = 0; springDone = true; }
             if (frac < 0) frac = 0;
             fx += sfx * frac; fy += sfy * frac;
+            // springs push from behind the centre → end-over-end flip
+            tq -= SP.offset * info.length * 0.5 * sfy * frac * tumble;
             springLeft = t;
           }
         } else if (type === 'rocket') {
-          if (t <= L.burn) { fx += n * L.strength * dcos(L.angle); fy += n * L.strength * dsin(L.angle); }
+          if (t <= L.burn) {
+            var ra = L.angle + SP.aim * dsin(t * TAU * SP.wobbleHz * 0.8);
+            var rfx = n * L.strength * dcos(ra), rfy = n * L.strength * dsin(ra);
+            fx += rfx; fy += rfy;
+            // thrust line slightly off centre: slow roll plus a wobble
+            var arm = info.height * (SP.roll + SP.wobble * dsin(t * TAU * SP.wobbleHz));
+            tq -= arm * rfx * tumble;
+          }
         }
       }
-      vx += fx * im * DT; vy += fy * im * DT;
+      vx += fx * im * DT; vy += fy * im * DT; w += tq * iI * DT;
       w *= 1 / (1 + spin * DT);
 
       // ---- contact impulses (sequential, accumulated)
@@ -496,8 +533,8 @@ var Core = (function () {
             vx += djt * im; w -= cry * djt * iI;
           }
         }
-        if (obj.roll > 0) {
-          var dec = obj.roll * G * DT;
+        if (roll > 0) {
+          var dec = roll * G * DT;
           if (vx > dec) vx -= dec; else if (vx < -dec) vx += dec; else vx = 0;
           var r0 = info.circle || info.height * 0.5, dw = dec / r0;
           if (w > dw) w -= dw; else if (w < -dw) w += dw; else w = 0;
@@ -631,7 +668,7 @@ var Core = (function () {
   }
 
   return {
-    LAUNCH_DATE: LAUNCH_DATE, LAUNCHERS: LAUNCHERS, OBJECTS: OBJECTS, MAX_COUNT: MAX_COUNT, DT: DT,
+    LAUNCH_DATE: LAUNCH_DATE, LAUNCHERS: LAUNCHERS, SPIN: SPIN, OBJECTS: OBJECTS, MAX_COUNT: MAX_COUNT, DT: DT,
     simulate: simulate, layout: layout, shapeInfo: shapeInfo, planDay: planDay, planPractice: planPractice,
     solvePlan: solvePlan, score: score, hashStr: hashStr, rng: rng, dsin: dsin, dcos: dcos, groundAt: groundAt
   };
@@ -1052,7 +1089,7 @@ function makeRig(type, obj, lay) {
   const rig = { type, group, slots, lay, parts: {}, spin: 0, spinV: 0, board: null, compress: 0, boardTop: lay.padH, boardV: 0 };
   const startY = lay.padH - info.minY;
   if (type === 'fan') {
-    const H = clamp(startY + 0.05, 0.5, 0.85); rig.H = H; const R = 0.3;
+    const H = lay.fanH; rig.H = H; const R = 0.3;
     const housing = M('#7fe0c4'), white = M('#ffffff', { roughness: 0.25 }), base = M('#5b5480', { roughness: 0.4 });
     rig.parts.base = new Part(cyl(0.2, 0.24, 0.07, 28), base, group, T(0, 0.035, 0));
     rig.parts.pole = new Part(cyl(0.032, 0.032, H, 12), base, group, T(0, H / 2, 0));
@@ -1144,13 +1181,13 @@ function buildWorld(themeKey, round) {
   const group = new THREE.Group(); scene.add(group);
   scene.background = grad(th.sky[0], th.sky[1]);
   scene.fog = new THREE.Fog(new THREE.Color(th.sky[1]), 30, 120);
-  const ftex = canvasTex(512, 512, th.floor, [600 / th.tile, 300 / th.tile]);
+  const ftex = canvasTex(512, 512, th.floor, [700 / th.tile, 520 / th.tile]);
   if (th.rot) ftex.rotation = 0;
   const floorMat = th.glossy
     ? new THREE.MeshPhysicalMaterial({ map: ftex, roughness: 0.06, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 1.2 })
     : new THREE.MeshStandardMaterial({ map: ftex, roughness: 0.85, metalness: 0, envMapIntensity: 0.5 });
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(600, 300).rotateX(-Math.PI / 2), floorMat);
-  floor.position.set(150, 0, -140); floor.receiveShadow = true; group.add(floor);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(700, 520).rotateX(-Math.PI / 2), floorMat);
+  floor.position.set(150, 0, -100); floor.receiveShadow = true; group.add(floor);
   ftex.offset.set(0, 0);
 
   if (th.wall) {
@@ -1168,12 +1205,12 @@ function buildWorld(themeKey, round) {
       const x = (m + 2) * ppm; if (x > w) break;
       const big = m % 5 === 0;
       g.fillRect(x - (big ? 2 : 1), 0, big ? 4 : 2, big ? 26 : 14);
-      if (big && m > 0) { g.font = '900 26px Nunito, system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(String(m), x, 56); }
       if (m < tapeLen) for (let k = 1; k < 4; k++) g.fillRect(x + k * ppm / 4, 0, 1, 7);
     }
   });
   const tape = new THREE.Mesh(new THREE.PlaneGeometry(tapeLen, 0.36).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: tapeTex, roughness: 0.6, transparent: true, opacity: 0.92 }));
-  tape.position.set(tapeLen / 2 - 2, 0.006, 0.95); tape.receiveShadow = true; group.add(tape);
+  tape.position.set(tapeLen / 2 - 2, 0.006, MARK.tapeZ); tape.receiveShadow = true; group.add(tape);
+  const markers = buildMarkers(group, tapeLen - 2);
 
   buildProps(th, group, round);
 
@@ -1199,7 +1236,54 @@ function buildWorld(themeKey, round) {
   const measure = new THREE.Mesh(new THREE.BoxGeometry(1, 0.012, 0.06), new THREE.MeshBasicMaterial({ color: '#2e2a4f', transparent: true, opacity: 0 }));
   measure.position.set(0, 0.02, 0.62); group.add(measure);
 
-  world = { group, theme: th, themeKey, target, pulse, flag, measure, dust: th.dust };
+  world = { group, theme: th, themeKey, target, pulse, flag, measure, markers, dust: th.dust };
+}
+
+/* ---------- distance markers: upright number boards on posts ----------
+   They turn to face the locked camera and grow when zoomed out so the
+   numbers never get smaller than MARK.minPx on screen.               */
+const MARK = { every: 5, z: -1.32, tapeZ: -0.95, board: [0.7, 0.36], post: 0.45, minPx: 30, maxScale: 7 };
+function buildMarkers(group, len) {
+  const vals = []; for (let m = 0; m <= len; m += MARK.every) vals.push(m);
+  const cols = 4, rows = Math.ceil(vals.length / cols), cw = 256, ch = 132;
+  const atlas = canvasTex(cols * cw, rows * ch, (g) => {
+    vals.forEach((m, i) => {
+      const x = (i % cols) * cw, y = Math.floor(i / cols) * ch;
+      g.fillStyle = '#ffffff'; g.strokeStyle = m === 0 ? '#7fd3c0' : '#ff7aa8'; g.lineWidth = 10;
+      g.beginPath(); g.roundRect(x + 8, y + 8, cw - 16, ch - 16, 26); g.fill(); g.stroke();
+      g.fillStyle = '#2e2a4f'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = '900 64px Nunito, ui-rounded, system-ui, sans-serif';
+      g.fillText(m === 0 ? 'start' : m + ' m', x + cw / 2, y + ch / 2 + 3);
+    });
+  });
+  const mat = new THREE.MeshBasicMaterial({ map: atlas, transparent: true, toneMapped: false });
+  const [bw, bh] = MARK.board, boards = [];
+  vals.forEach((m, i) => {
+    const col = i % cols, row = Math.floor(i / cols);
+    const geo = new THREE.PlaneGeometry(bw, bh), uv = geo.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setXY(k, (col + uv.getX(k)) / cols, 1 - (row + 1 - uv.getY(k)) / rows);
+    const b = new THREE.Mesh(geo, mat);
+    b.rotation.order = 'YXZ'; b.rotation.y = -CAM.yaw * DEG; b.rotation.x = -CAM.pitch * DEG * 0.6;
+    b.position.set(m, MARK.post + bh / 2, MARK.z); b.userData.m = m;
+    group.add(b); boards.push(b);
+  });
+  const posts = new THREE.InstancedMesh(cyl(0.028, 0.032, 1, 10), M('#ffffff', { roughness: 0.3 }), vals.length);
+  posts.castShadow = true; posts.frustumCulled = false; group.add(posts);
+  return { boards, posts, vals };
+}
+function updateMarkers() {
+  const mk = world && world.markers; if (!mk) return;
+  const H = app.clientHeight, tv = Math.tan(camera.fov * DEG / 2), bh = MARK.board[1];
+  mk.boards.forEach((b, i) => {
+    tmpV2.set(b.userData.m, 0.6, MARK.z);
+    const dist = camera.position.distanceTo(tmpV2);
+    const sc = clamp(MARK.minPx * 2 * dist * tv / (bh * H), 1, MARK.maxScale);
+    b.scale.setScalar(sc);
+    b.position.y = (MARK.post + bh / 2) * sc;
+    _m.compose(_v.set(b.userData.m, MARK.post * sc / 2, MARK.z), _q.identity(), _s.set(sc, MARK.post * sc + 0.02, sc));
+    mk.posts.setMatrixAt(i, _m);
+  });
+  mk.posts.instanceMatrix.needsUpdate = true;
 }
 
 function buildProps(th, group, round) {
@@ -1303,7 +1387,8 @@ const G = {
   mode: 'daily', day: null, plan: null, idx: 0,
   round: null, plan1: null, obj: null, objGroup: null, rig: null, info: null,
   phase: 'loading', count: 0, sim: null, playT: 0, ts: 1, introT: 0,
-  settleT: 0, impactIdx: 0, loops: [], cam: { x: 0, y: 0.5, d: 8 }, camGoal: { x: 0, y: 0.5, d: 8 },
+  settleT: 0, impactIdx: 0, loops: [], cam: { x: 0, y: 0.5, z: 0, d: 8 }, camGoal: { x: 0, y: 0.5, z: 0, d: 8 },
+  zoom: 0, zoomGoal: 0, zoomV: { v: 0 }, zoomUser: false,
   squash: 0, practiceSeed: 0, lastRest: null
 };
 
@@ -1362,12 +1447,13 @@ function startRound(planEntry, opts = {}) {
     G.rig.slots.forEach((s, i) => { s.target = i < opts.count ? 1 : 0; s.s = s.target; });
     applyFrame(sim.time); G.phase = 'done'; G.settleT = 10;
     $('#roundInfo').classList.remove('hide');
-    snapCam(settleFrame());
+    G.zoom = G.zoomGoal = 1; G.zoomUser = false;
+    snapCam(resultViews().at(1));
     return;
   }
   G.phase = 'intro'; G.introT = RM ? 99 : 0;
-  const tf = targetFrame(), af = aimFrame();
-  snapCam(RM ? af : tf);
+  G.zoomUser = false; G.zoomV.v = 0;
+  snapCam(RM ? aimViews().at(aimViews().zDefault) : targetView());
   $('#roundInfo').classList.remove('hide');
   $('#count').classList.add('hide');
   $('#hint').classList.add('hide');
@@ -1435,41 +1521,160 @@ function applyFrame(t) {
   G.cur = s; return s;
 }
 
-/* ---------- camera ---------- */
+/* ---------- camera ----------------------------------------------------
+   Locked, angled "knife-flip" view: raised, tilted down and turned so
+   the path runs diagonally away. Views are fitted to world-space bounds
+   (object, launchers, target) inside the part of the screen the HUD
+   leaves free, so framing works for any screen shape.               */
+const CAM = {
+  pitch: 20,          // ° the camera tilts down
+  yaw: 28,            // ° the view is turned so the path runs away diagonally
+  fov: 34,            // vertical field of view (°)
+  pad: 0.07,          // breathing room around fitted bounds (fraction of the free area)
+  closeMargin: 0.5,   // m kept around the object at full zoom-in
+  zoomTime: 0.34,     // s — ease-in-out time of a zoom change
+  pinchGain: 1.1,     // zoom change per e-fold of finger spread
+  wheelGain: 0.0016,  // zoom change per wheel pixel
+  followWidth: 3.2,   // m of world the flight camera shows at rest…
+  followSpeed: 0.12   // …plus this many m per m/s of speed
+};
+const DEG = Math.PI / 180;
+const CAM_DIR = new THREE.Vector3(), CAM_R = new THREE.Vector3(), CAM_U = new THREE.Vector3(), CAM_F = new THREE.Vector3();
+function setCamAngle() {
+  const p = CAM.pitch * DEG, y = CAM.yaw * DEG;
+  CAM_DIR.set(-Math.sin(y) * Math.cos(p), Math.sin(p), Math.cos(y) * Math.cos(p)).normalize(); // focus → camera
+  CAM_F.copy(CAM_DIR).negate();
+  CAM_R.crossVectors(CAM_F, new THREE.Vector3(0, 1, 0)).normalize();
+  CAM_U.crossVectors(CAM_R, CAM_F).normalize();
+  camera.fov = CAM.fov; camera.updateProjectionMatrix();
+}
+setCamAngle();
+
 function fitDist(width, height) {
   const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
   return Math.max((width / 2) / Math.tan(hf), (height / 2) / Math.tan(vf));
 }
-function launcherExtent() {
-  const lay = G.lay, n = Math.max(1, G.count);
-  if (G.round.type === 'fan' || G.round.type === 'blower') return lay.slots[n - 1].x - (G.round.type === 'blower' ? 0.75 : 0.35);
-  if (G.round.type === 'spring') return lay.padX0 - 0.1;
-  return G.info.minX - 0.6;
+// free screen area (px) the scene should fit in, given what HUD is showing
+function safeRegion(kind) {
+  const W = app.clientWidth, H = app.clientHeight;
+  const bottomOf = (el) => el.offsetTop + el.offsetHeight;
+  let top = bottomOf($('#roundInfo')) + 10, bottom = H - 18;
+  if (kind === 'aim') { top = Math.max(top, bottomOf($('#count')) + 4); bottom = $('#hint').offsetTop - 10; }
+  else if (kind === 'result') { const sh = $('#summary').classList.contains('open') ? $('#summary') : $('#result'); bottom = sh.offsetTop - 12; }
+  const minH = H * 0.24;
+  if (bottom - top < minH) bottom = Math.min(H - 10, top + minH);
+  return { left: 12, right: W - 12, top, bottom };
 }
-function aimFrame() {
-  const left = Math.min(launcherExtent(), -1.2) - 0.85, right = Math.max(G.info.maxX + 1.2, 2.2);
-  const T = G.round.target;
-  const fullW = (T + 1.3) - left;
-  if (fullW <= 6.5) return { x: (left + T + 1.3) / 2, y: G.startY * 0.6, d: fitDist(fullW + 0.6, 3), lift: 0 };
-  const w = Math.max(3.0, right - left);
-  return { x: (left + right) / 2 + 0.3, y: G.startY * 0.6, d: fitDist(w, 3), lift: 0 };
+function box(out, x0, x1, y0, y1, z0, z1) {
+  out.push(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y0, z0), new THREE.Vector3(x0, y1, z0), new THREE.Vector3(x1, y1, z0),
+    new THREE.Vector3(x0, y0, z1), new THREE.Vector3(x1, y0, z1), new THREE.Vector3(x0, y1, z1), new THREE.Vector3(x1, y1, z1));
+  return out;
 }
-function targetFrame() { return { x: G.round.target, y: 0.5, d: fitDist(4.2, 3), lift: 0 }; }
-function settleFrame() {
-  const rx = G.objGroup.position.x, T = G.round.target;
-  const a = Math.min(rx, T) - 1.2, b = Math.max(rx, T) + 1.2, w = b - a;
-  if (w <= 14) return { x: (a + b) / 2, y: 0.4, d: fitDist(Math.max(w, 4), 3), lift: 0.2 };
-  return { x: rx + (T > rx ? 1.5 : -1.5), y: 0.4, d: fitDist(7, 3), lift: 0.2 };
+function objPts(out, margin = 0) {
+  const i = G.info, p = G.objGroup.position, a = G.objGroup.rotation.z, c = Math.cos(a), s = Math.sin(a);
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const [px, py] of [[i.minX, i.minY], [i.maxX, i.minY], [i.maxX, i.maxY], [i.minX, i.maxY]]) {
+    const wx = p.x + c * px - s * py, wy = p.y + s * px + c * py;
+    x0 = Math.min(x0, wx); x1 = Math.max(x1, wx); y0 = Math.min(y0, wy); y1 = Math.max(y1, wy);
+  }
+  return box(out, x0 - margin, x1 + margin, Math.max(0, y0 - margin * 0.3), y1 + margin * 0.6, -0.35 - margin * 0.5, 0.35 + margin * 0.5);
 }
+function launcherPts(out) {
+  const lay = G.lay, n = Math.max(1, G.count), type = G.round.type;
+  if (type === 'fan' || type === 'blower') return box(out, lay.slots[n - 1].x - (type === 'blower' ? 0.8 : 0.45), lay.slots[0].x + 0.2, 0, (type === 'fan' ? lay.fanH + 0.35 : 0.45), -0.6, 0.6);
+  if (type === 'spring') return box(out, lay.padX0 - 0.05, lay.padX1 + 0.05, 0, lay.padH + 0.1, -0.5, 0.5);
+  return box(out, G.info.minX - 0.55, G.info.maxX, G.startY + G.info.minY, G.startY + G.info.maxY, -0.35, 0.35);
+}
+function targetPts(out) {
+  const T = G.round.target, L = G.round.length;
+  box(out, T - L, T + L, 0, 0.05, -L, L);
+  out.push(new THREE.Vector3(T, 2.0, -0.55), new THREE.Vector3(T + 0.75, 1.85, -0.55));
+  return out;
+}
+// camera focus + distance that fits all points inside the screen region
+function fitView(pts, reg) {
+  const W = app.clientWidth, H = app.clientHeight;
+  const nl = reg.left / W * 2 - 1, nr = reg.right / W * 2 - 1, nt = 1 - reg.top / H * 2, nb = 1 - reg.bottom / H * 2;
+  const px = (nr - nl) * CAM.pad, py = (nt - nb) * CAM.pad;
+  const L = nl + px, R = nr - px, B = nb + py, T = nt - py;
+  const tv = Math.tan(camera.fov * DEG / 2), th = tv * camera.aspect;
+  const f = new THREE.Vector3(); pts.forEach((p) => f.add(p)); f.divideScalar(pts.length);
+  const bb = { x0: 0, x1: 0, y0: 0, y1: 0 };
+  const proj = (d) => {
+    const cx = f.x + CAM_DIR.x * d, cy = f.y + CAM_DIR.y * d, cz = f.z + CAM_DIR.z * d;
+    bb.x0 = bb.y0 = 1e9; bb.x1 = bb.y1 = -1e9;
+    for (const p of pts) {
+      const vx = p.x - cx, vy = p.y - cy, vz = p.z - cz;
+      const z = vx * CAM_F.x + vy * CAM_F.y + vz * CAM_F.z;
+      if (z < 0.2) return false;
+      const xn = (vx * CAM_R.x + vy * CAM_R.y + vz * CAM_R.z) / (z * th), yn = (vx * CAM_U.x + vy * CAM_U.y + vz * CAM_U.z) / (z * tv);
+      if (xn < bb.x0) bb.x0 = xn; if (xn > bb.x1) bb.x1 = xn; if (yn < bb.y0) bb.y0 = yn; if (yn > bb.y1) bb.y1 = yn;
+    }
+    return bb.x1 - bb.x0 <= R - L && bb.y1 - bb.y0 <= T - B;
+  };
+  const search = () => { let lo = 0.5, hi = 900; for (let k = 0; k < 26; k++) { const mid = Math.sqrt(lo * hi); if (proj(mid)) hi = mid; else lo = mid; } return hi; };
+  let d = 10;
+  for (let it = 0; it < 5; it++) {
+    d = search(); proj(d);
+    const sx = (bb.x0 + bb.x1) / 2 - (L + R) / 2, sy = (bb.y0 + bb.y1) / 2 - (B + T) / 2;
+    f.addScaledVector(CAM_R, sx * d * th).addScaledVector(CAM_U, sy * d * tv);
+  }
+  d = search();
+  return { x: f.x, y: f.y, z: f.z, d };
+}
+function blendView(a, b, u) {
+  return { x: lerp(a.x, b.x, u), y: lerp(a.y, b.y, u), z: lerp(a.z, b.z, u), d: Math.exp(lerp(Math.log(a.d), Math.log(b.d), u)) };
+}
+// zoom 0 = close on the object, 1 = object + target; `mid` is an optional
+// in-between view (e.g. object + launchers) placed where its distance falls
+function zoomViews(vin, vmid, vout) {
+  let zm = null;
+  if (vmid) { const l0 = Math.log(vin.d), l1 = Math.log(vout.d); zm = l1 > l0 + 1e-3 ? clamp((Math.log(vmid.d) - l0) / (l1 - l0), 0.02, 0.98) : 0.5; }
+  return {
+    zDefault: zm,
+    at(z) {
+      if (zm == null || !vmid) return blendView(vin, vout, z);
+      return z <= zm ? blendView(vin, vmid, z / zm) : blendView(vmid, vout, (z - zm) / (1 - zm));
+    }
+  };
+}
+function aimViews() {
+  const reg = safeRegion(G.phase === 'intro' ? 'intro' : 'aim');
+  const vin = fitView(objPts([], CAM.closeMargin), reg);
+  const vmid = fitView(launcherPts(objPts([], 0.25)), reg);
+  const vout = fitView(targetPts(launcherPts(objPts([], 0.1))), reg);
+  if (vmid.d < vin.d) Object.assign(vmid, vin);
+  if (vout.d < vmid.d) Object.assign(vout, vmid);
+  return zoomViews(vin, vmid, vout);
+}
+function targetView() { return fitView(targetPts([]), safeRegion('intro')); }
+function resultViews() {
+  const reg = safeRegion('result');
+  const vin = fitView(objPts([], CAM.closeMargin), reg);
+  const vout = fitView(targetPts(objPts([], 0.15)), reg);
+  if (vout.d < vin.d) Object.assign(vout, vin);
+  return zoomViews(vin, null, vout);
+}
+function smoothDampZoom(dt) {
+  const st = G.zoomV, T = Math.max(0.0001, RM ? 0.12 : CAM.zoomTime), omega = 2 / T, x = omega * dt;
+  const ex = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  const target = G.zoomGoal, change = G.zoom - target, temp = (st.v + omega * change) * dt;
+  st.v = (st.v - omega * temp) * ex;
+  let out = target + (change + temp) * ex;
+  if ((target - G.zoom > 0) === (out > target)) { out = target; st.v = 0; }
+  G.zoom = clamp(out, 0, 1);
+}
+function zoomable() { return G.phase === 'aim' || G.phase === 'done' || G.phase === 'settle' || G.phase === 'intro'; }
+function setZoomGoal(z) { G.zoomGoal = clamp(z, 0, 1); G.zoomUser = true; if (G.phase === 'intro') G.introT = 99; }
 function snapCam(f) { Object.assign(G.cam, f); Object.assign(G.camGoal, f); placeCam(); }
 function placeCam() {
   const c = G.cam;
-  camera.position.set(c.x, c.y + 0.35 + c.d * 0.2, c.d);
-  camera.lookAt(c.x, c.y + 0.35 + c.d * (0.085 - (c.lift || 0)), 0);
+  camera.position.set(c.x + CAM_DIR.x * c.d, c.y + CAM_DIR.y * c.d, c.z + CAM_DIR.z * c.d);
+  camera.lookAt(c.x, c.y, c.z);
   // shadow box follows the action
-  const fx = G.objGroup ? G.objGroup.position.x : c.x;
+  const fx = G.objGroup ? lerp(c.x, G.objGroup.position.x, 0.5) : c.x;
   sun.position.set(fx - 3, 9, 6); sun.target.position.set(fx, 0, 0);
-  const sc = sun.shadow.camera, ext = clamp(c.d * 0.35, 4, 14);
+  const sc = sun.shadow.camera, ext = clamp(c.d * 0.42, 4, 30);
   if (Math.abs(sc.right - ext) > 0.5) { sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.updateProjectionMatrix(); }
   scene.fog.near = c.d * 1.6; scene.fog.far = c.d * 6 + 40;
 }
@@ -1484,14 +1689,19 @@ function update(dt, now) {
 
   if (G.phase === 'intro') {
     G.introT += dt;
-    const hold = 0.7, dur = 1.7;
+    const hold = 0.7, dur = 1.8;
     const u = clamp((G.introT - hold) / dur, 0, 1), e = easeInOut(u);
-    const a = targetFrame(), b = aimFrame();
-    G.cam.x = lerp(a.x, b.x, e); G.cam.y = lerp(a.y, b.y, e); G.cam.d = lerp(a.d, b.d, e); G.cam.lift = 0;
+    const zv = aimViews();
+    if (!G.zoomUser) G.zoomGoal = G.zoom = zv.zDefault;
+    else smoothDampZoom(dt);
+    Object.assign(G.cam, blendView(targetView(), zv.at(G.zoom), e));
     Object.assign(G.camGoal, G.cam);
     if (u >= 1) beginAim();
   } else if (G.phase === 'aim') {
-    Object.assign(G.camGoal, aimFrame());
+    const zv = aimViews();
+    if (!G.zoomUser) G.zoomGoal = zv.zDefault;
+    smoothDampZoom(dt);
+    Object.assign(G.camGoal, zv.at(G.zoom));
   } else if (G.phase === 'flight') {
     const remain = G.sim.time - G.playT;
     const slow = !RM && remain < 1.1 && G.sim.time > 1.4;
@@ -1510,21 +1720,25 @@ function update(dt, now) {
     }
     const lead = clamp(s.vx * 0.1, -0.3, 0.9);
     const speed = Math.hypot(s.vx, s.vy);
-    G.camGoal.x = s.x + lead + 0.25;
-    G.camGoal.y = Math.max(0.3, s.y * 0.7);
-    G.camGoal.d = fitDist(clamp(3.2 + speed * 0.12 + s.y * 0.5, 3.2, 7.5), 2.6) * (slow ? 0.9 : 1);
-    G.camGoal.lift = 0;
+    G.camGoal.x = s.x + lead + 0.2;
+    G.camGoal.y = Math.max(0.3, s.y * 0.75);
+    G.camGoal.z = 0;
+    G.camGoal.d = fitDist(clamp(CAM.followWidth + speed * CAM.followSpeed + s.y * 0.5, CAM.followWidth, 8), 2.6) * (slow ? 0.9 : 1);
     if (G.playT >= G.sim.time) onRest();
   } else if (G.phase === 'settle' || G.phase === 'done') {
     simT = G.sim ? G.sim.time : 0;
     G.settleT += dt;
-    Object.assign(G.camGoal, settleFrame());
+    const zv = resultViews();
+    smoothDampZoom(dt);
+    Object.assign(G.camGoal, zv.at(G.zoom));
     if (G.phase === 'settle') settleTimeline();
   }
   if (G.phase !== 'intro') {
-    const rate = G.phase === 'flight' ? 4.2 : 3.2;
-    G.cam.x = damp(G.cam.x, G.camGoal.x, rate, dt); G.cam.y = damp(G.cam.y, G.camGoal.y, rate, dt); G.cam.d = damp(G.cam.d, G.camGoal.d, 2.6, dt);
-    G.cam.lift = damp(G.cam.lift || 0, G.camGoal.lift || 0, 2.5, dt);
+    // flight: smooth follow · settle: ease out to the result view · aim/done: zoom is already eased
+    const rate = G.phase === 'flight' ? 4.2 : G.phase === 'aim' ? 8 : Math.min(8, 2.2 + G.settleT * 2.5);
+    const drate = G.phase === 'flight' ? 2.6 : rate;
+    G.cam.x = damp(G.cam.x, G.camGoal.x, rate, dt); G.cam.y = damp(G.cam.y, G.camGoal.y, rate, dt); G.cam.z = damp(G.cam.z, G.camGoal.z, rate, dt);
+    G.cam.d = Math.exp(damp(Math.log(G.cam.d), Math.log(G.camGoal.d), drate, dt));
   }
   placeCam();
 
@@ -1542,6 +1756,7 @@ function update(dt, now) {
   updateRig(dt, time, simT, active);
   updateWorld(dt, time);
   Particles.update(RM ? dt : dt * (G.phase === 'flight' ? G.ts : 1));
+  updateMarkers();
   updateLabels();
 }
 
@@ -1647,6 +1862,7 @@ function updateWorld(dt, time) {
 /* ---------- landing → result ---------- */
 function onRest() {
   G.phase = 'settle'; G.settleT = 0; G.ts = 1; G.lastRest = G.objGroup.position.x;
+  G.zoom = G.zoomGoal = 1; G.zoomV.v = 0; G.zoomUser = false;
   G.flags = {};
   if (G.mode === 'daily') saveDay();
 }
@@ -1678,7 +1894,7 @@ function updateLabels() {
   const showTag = G.phase === 'aim' || G.phase === 'intro' || G.phase === 'flight';
   if (showTag) {
     const p = project(G.round.target, 2.15, -0.55);
-    const edge = p.x > W - 30;
+    const edge = p.x > W - 30 || p.y < 150 || p.behind;
     const oy = project(G.objGroup.position.x, G.objGroup.position.y + G.info.maxY + 0.9, 0).y;
     const x = clamp(p.x, 54, W - 54), y = edge ? clamp(oy, 170, app.clientHeight - 120) : p.y;
     tag.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;
@@ -1848,19 +2064,35 @@ async function submitScore() {
 /* =====================================================================
    INPUT — drag back to add launchers
    ===================================================================== */
-const drag = { on: false, id: -1, x0: 0, y0: 0 };
+const drag = { on: false, id: -1, x0: 0, y0: 0, prev: 0 };
+const pointers = new Map();
+const pinch = { on: false, d0: 1, z0: 0 };
 function appXY(e) { const r = app.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function pinchDist() { const [a, b] = [...pointers.values()]; return Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)); }
 app.addEventListener('pointerdown', (e) => {
   Sound.unlock();
   if (e.target.closest('button, .sheet, .modal, .icon-btn')) return;
+  const p = appXY(e); pointers.set(e.pointerId, p);
+  try { app.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  if (pointers.size === 2 && zoomable()) {
+    // second finger: this is a pinch, not a launcher drag
+    if (drag.on) { drag.on = false; hidePull(); setCount(drag.prev); }
+    Object.assign(pinch, { on: true, d0: pinchDist(), z0: G.zoomGoal });
+    setZoomGoal(G.zoomGoal);
+    return;
+  }
+  if (pointers.size > 1) return;
   if (G.phase === 'intro') { G.introT = 99; return; }
   if (G.phase !== 'aim' || drag.on) return;
-  const p = appXY(e);
-  Object.assign(drag, { on: true, id: e.pointerId, x0: p.x, y0: p.y, base: 0 });
-  try { app.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  Object.assign(drag, { on: true, id: e.pointerId, x0: p.x, y0: p.y, prev: G.count });
   showPull(p, p);
 });
 app.addEventListener('pointermove', (e) => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, appXY(e));
+  if (pinch.on) {
+    if (pointers.size >= 2 && zoomable()) setZoomGoal(pinch.z0 + Math.log(pinch.d0 / pinchDist()) * CAM.pinchGain);
+    return;
+  }
   if (!drag.on || e.pointerId !== drag.id) return;
   const p = appXY(e);
   // "back" = away from the target (left) — vertical pull counts too so
@@ -1869,13 +2101,22 @@ app.addEventListener('pointermove', (e) => {
   setCount(Math.floor(Math.max(0, back) / PX_PER_LAUNCHER));
   showPull({ x: drag.x0, y: drag.y0 }, p);
 });
-function endDrag(e) {
+function endPointer(e, cancelled) {
+  pointers.delete(e.pointerId);
+  if (pinch.on) { if (pointers.size < 2) pinch.on = false; return; }
   if (!drag.on || e.pointerId !== drag.id) return;
   drag.on = false; hidePull();
-  if (G.count >= 1) launch(); else setCount(0);
+  if (!cancelled && G.count >= 1) launch(); else setCount(0);
 }
-app.addEventListener('pointerup', endDrag);
-app.addEventListener('pointercancel', (e) => { if (drag.on && e.pointerId === drag.id) { drag.on = false; hidePull(); setCount(0); } });
+app.addEventListener('pointerup', (e) => endPointer(e, false));
+app.addEventListener('pointercancel', (e) => endPointer(e, true));
+app.addEventListener('wheel', (e) => {
+  if (e.target.closest('.sheet, .modal')) return;
+  e.preventDefault();
+  if (!zoomable()) return;
+  const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+  setZoomGoal(G.zoomGoal + clamp(dy, -120, 120) * CAM.wheelGain);
+}, { passive: false });
 function showPull(a, b) {
   const s = $('#pull'); s.classList.add('on');
   $('#pullLine').setAttribute('x1', a.x); $('#pullLine').setAttribute('y1', a.y); $('#pullLine').setAttribute('x2', b.x); $('#pullLine').setAttribute('y2', b.y);
@@ -1891,7 +2132,9 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { setCount(G.count - 1); e.preventDefault(); }
     else if (e.key === 'Enter' || e.key === ' ') { Sound.unlock(); launch(); e.preventDefault(); }
     else if (e.key === 'Escape') setCount(0);
-  } else if (G.phase === 'done' && e.key === 'Enter') {
+  }
+  if (zoomable() && (e.key === '+' || e.key === '=')) setZoomGoal(G.zoomGoal - 0.15);
+  if (zoomable() && (e.key === '-' || e.key === '_')) setZoomGoal(G.zoomGoal + 0.15); else if (G.phase === 'done' && e.key === 'Enter') {
     const b = document.querySelector('.sheet.open .btn'); if (b && document.activeElement === document.body) { b.click(); e.preventDefault(); }
   }
 });
@@ -2007,7 +2250,14 @@ if (!store.get('seenHelp', false)) setTimeout(openHelp, 400);
 window.__projectle = {
   G, C, setCount, launch, startPractice, openSummary,
   play(id, type, roundIdx = 2) { G.mode = 'practice'; const obj = C.OBJECTS.find((o) => o.id === id); startRound({ obj, type, roundIdx, seed: 1 }); G.introT = 99; },
-  seek(t) { if (G.sim) G.playT = t; }
+  seek(t) { if (G.sim) G.playT = t; },
+  settled() { return Math.abs(G.zoom - G.zoomGoal) < 0.005 && Math.abs(Math.log(G.cam.d / G.camGoal.d)) < 0.01 && Math.abs(G.cam.x - G.camGoal.x) < 0.05; },
+  visCheck() { // are object + target inside the free screen area?
+    const reg = safeRegion('result'), pts = targetPts(objPts([], 0)); let ok = true, worst = '';
+    for (const p of pts) { const q = project(p.x, p.y, p.z); if (q.x < reg.left - 2 || q.x > reg.right + 2 || q.y < reg.top - 2 || q.y > reg.bottom + 2) { ok = false; worst = Math.round(q.x) + ',' + Math.round(q.y); } }
+    return { ok, worst, rest: +G.result.rest.toFixed(1), T: +G.result.target.toFixed(1), score: G.result.score, d: +G.cam.d.toFixed(1) };
+  },
+  views() { const v = G.phase === 'aim' ? aimViews() : resultViews(); return { z: G.zoom, zg: G.zoomGoal, zd: v.zDefault, v0: v.at(0), v1: v.at(1), cam: { ...G.cam } }; }
 };
 </script>
 </body>
